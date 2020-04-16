@@ -1,0 +1,63 @@
+import tensorflow 
+import tensorflow as tf
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras import layers , initializers
+import tensorflow.keras.backend as K
+
+def squash(input,axis=-1):
+    s_squared_norm = K.sum(K.square(input), axis, keepdims=True)
+    scale = s_squared_norm / (1 + s_squared_norm) / K.sqrt(s_squared_norm + K.epsilon())
+    return scale * input
+
+class primarylayer(layers.Layer):
+    def __init__(self,num_capsule,len_capsule):
+        super(primarylayer,self).__init__()
+        self.num_capsule=num_capsule
+        self.len_capsule=len_capsule
+
+    def call(self,input):
+        input=Conv2D(self.num_capsule*self.len_capsule,9,1,activation='sigmoid')(input)
+        return tf.keras.layers.Reshape((-1,self.num_capsule))(input)
+    
+class capsulelayer(layers.Layer):
+    def __init__(self,num_capsule,len_capsule,num_routing=3):
+        super(capsulelayer,self).__init__()
+        self.num_capsule=num_capsule
+        self.len_capsule=len_capsule
+        self.num_routing=num_routing
+    
+    def build(self,input_shape):
+        self.input_num_capsule = input_shape[1]
+        self.input_len_capsule = input_shape[2]
+        self.kernel_initializer=initializers.get('glorot_uniform')
+        self.W = self.add_weight(shape=[self.num_capsule * self.input_num_capsule,
+                                        self.len_capsule, self.input_len_capsule],
+                                 initializer=self.kernel_initializer,
+                                 name='W')
+        
+        self.build=True
+    
+    def call(self,input):
+        inputs_expand = K.expand_dims(inputs, 1)
+        inputs_tiled = K.tile(inputs_expand, [1, self.num_capsule, 1, 1])
+        inputs_tiled=layers.Reshape([self.input_num_capsule*self.num_capsule,self.input_dim_capsule],name='input_tiled_reshape')(inputs_tiled)
+        inputs_hat = K.map_fn(lambda x: K.batch_dot(x, self.W, [1, 2]), elems=inputs_tiled)
+        inputs_hat=layers.Reshape([self.num_capsule,self.input_num_capsule,self.dim_capsule],name='input_tiled_reshape')(inputs_hat)
+
+        b = tf.zeros(shape=[ self.num_capsule, self.input_num_capsule])
+        assert self.routings > 0, 'The routings should be > 0.'
+        for i in range(self.routings):
+            c = tf.nn.softmax(b, axis=0)
+            outputs = squash(K.map_fn(lambda x:K.batch_dot(x,c,axes=[1,1]),elems=inputs_hat))  
+           
+            if i < self.routings - 1:
+                
+                outputs_for_update=K.mean(outputs,axis=0,keepdims=True)
+                outputs_for_update=K.tile(outputs_for_update,[10,1,1])
+                a= K.map_fn(lambda x:K.batch_dot( outputs_for_update,x, [2, 2]),elems=inputs_hat)[:,0,:,:]
+                b+=K.mean(a,axis=0)
+    
+        return outputs
+   
+
+        
